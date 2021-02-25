@@ -16,7 +16,7 @@ CREATE TABLE `actor` (
 PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
- INSERT INTO `actor` (`id`, `name`, `update_time`) VALUES (1,'a','2017‐12‐22 15:27:18'), (2,'b','2017‐12‐22 15:27:18'), (3,'c','2017‐12‐22 15:27:18');
+ INSERT INTO `actor` (`id`, `name`, `update_time`) VALUES (1,'a',now()), (2,'b',now()), (3,'c',now());
 
  DROP TABLE IF EXISTS `film`;
  CREATE TABLE `film` (
@@ -119,8 +119,7 @@ mysql> show warnings;
    
    > 当 from 子句中有子查询时，table列是 <derivenN> 格式，表示当前查询依赖 id=N 的查
    > 询，于是先执行 id=N 的查询。(运用了零时表)
-   > 当有 union 时，UNION RESULT 的 table 列的值为<union1,2>，1和2表示参与 union 的
-> select 行id。
+   > 当有 union 时，UNION RESULT 的 table 列的值为<union1,2>，1和2表示参与 union 的select 行id。
 
    ![image-20210224111654064](MySQL执行计划与索引详解.assets/image-20210224111654064.png)
 
@@ -269,8 +268,7 @@ mysql> show warnings;
     ```
     ![image-20210224150943441](MySQL执行计划与索引详解.assets/image-20210224150943441.png)
     
-    3）**Using index condition**：查询的列不完全被索引覆盖，where条件中是一个前导列的范
-    围；
+    3）**Using index condition**：查询的列不完全被索引覆盖，where条件中是一个前导列的范围；
     
     ```mysql
     mysql> explain select * from film_actor where film_id > 1;
@@ -339,112 +337,204 @@ INSERT INTO employees(name,age,position,hire_time) VALUES('LiLei',22,'manager',N
 INSERT INTO employees(name,age,position,hire_time) VALUES('HanMeimei',23,'dev',NOW());
 INSERT INTO employees(name,age,position,hire_time) VALUES('Lucy',23,'dev',NOW());
 ```
-1.全值匹配
+1. 全值匹配
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name= 'LiLei';
 ```
+
+![image-20210224163241465](MySQL执行计划与索引详解.assets/image-20210224163241465.png)
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name= 'LiLei' AND age = 22;
 ```
+
+![image-20210224163358936](MySQL执行计划与索引详解.assets/image-20210224163358936.png)
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name= 'LiLei' AND age = 22 AND
 position ='manager';
 ```
-2.最左前缀法则
-如果索引了多列，要遵守最左前缀法则。指的是查询从索引的最左前列开始并且不跳过索引
-中的列。
+
+![image-20210224163451465](MySQL执行计划与索引详解.assets/image-20210224163451465.png)
+
+2. 最左前缀法则
+   如果索引了多列，要遵守最左前缀法则。指的是查询从索引的最左前列开始并且不跳过索引中的列。
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE age = 22 AND position ='manager';
 ```
+
+![image-20210224164035641](MySQL执行计划与索引详解.assets/image-20210224164035641.png)
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE position = 'manager';
 ```
+
+![image-20210224164142420](MySQL执行计划与索引详解.assets/image-20210224164142420.png)
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name = 'LiLei';
 ```
-3.不在索引列上做任何操作（计算、函数、（自动or手动）类型转换），会导致索引失效而转
-向全表扫描
+
+![image-20210224164228242](MySQL执行计划与索引详解.assets/image-20210224164228242.png)
+
+3. 不在索引列上做任何操作（计算、函数、（自动or手动）类型转换），会导致索引失效而转向全表扫描
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name = 'LiLei';
 ```
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE left(name,3) = 'LiLei';
 ```
+
+![image-20210224164515345](MySQL执行计划与索引详解.assets/image-20210224164515345.png)
+
 给hire_time增加一个普通索引：
-1 ALTER TABLE `employees`
-2 ADD INDEX `idx_hire_time` (`hire_time`) USING BTREE ;
+
+```mysql
+ALTER TABLE `employees`
+ADD INDEX `idx_hire_time` (`hire_time`) USING BTREE;
+```
+
 ```mysql
 EXPLAIN select * from employees where date(hire_time) ='2018-09-30';
 ```
+![image-20210224164701700](MySQL执行计划与索引详解.assets/image-20210224164701700.png)
+
 转化为日期范围查询，会走索引：
+
 ```mysql
 EXPLAIN select * from employees where hire_time >='2018-09-30 00:00:00' and
 hire_time <='2018-09-30 23:59:59';
 ```
+![image-20210224164744974](MySQL执行计划与索引详解.assets/image-20210224164744974.png)
+
 还原最初索引状态
-1 ALTER TABLE `employees`
-2 DROP INDEX `idx_hire_time`;
-4.存储引擎不能使用索引中范围条件右边的列
+
+```mysql
+ALTER TABLE `employees`
+DROP INDEX `idx_hire_time`;
+```
+
+4. 存储引擎不能使用索引中范围条件右边的列
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name= 'LiLei' AND age = 22 AND
 position ='manager';
 ```
+
+![image-20210224165050311](MySQL执行计划与索引详解.assets/image-20210224165050311.png)
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name= 'LiLei' AND age > 22 AND
 position ='manager';
 ```
-5.尽量使用覆盖索引（只访问索引的查询（索引列包含查询列）），减少select *语句
+
+![image-20210224165137068](MySQL执行计划与索引详解.assets/image-20210224165137068.png)
+
+5. 尽量使用覆盖索引（只访问索引的查询（索引列包含查询列）），减少select *语句
+
 ```mysql
 EXPLAIN SELECT name,age FROM employees WHERE name= 'LiLei' AND age = 23
 AND position ='manager';
 ```
+
+![image-20210224165425647](MySQL执行计划与索引详解.assets/image-20210224165425647.png)
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name= 'LiLei' AND age = 23 AND
 position ='manager';
 ```
-6.mysql在使用不等于（！=或者<>）的时候无法使用索引会导致全表扫描
+
+![image-20210224165503937](MySQL执行计划与索引详解.assets/image-20210224165503937.png)
+
+6. mysql在使用不等于（！=或者<>）的时候无法使用索引会导致全表扫描
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name != 'LiLei';
 ```
-7.is null,is not null 也无法使用索引
+
+![image-20210224165743863](MySQL执行计划与索引详解.assets/image-20210224165743863.png)
+
+7. is null,is not null 也无法使用索引
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name is null
 ```
-8.like以通配符开头（'$abc...'）mysql索引失效会变成全表扫描操作
+
+![image-20210224165850359](MySQL执行计划与索引详解.assets/image-20210224165850359.png)
+
+8. like以通配符开头（'$abc...'）mysql索引失效会变成全表扫描操作
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name like '%Lei'
 ```
+
+![image-20210224165936118](MySQL执行计划与索引详解.assets/image-20210224165936118.png)
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name like 'Lei%'
 ```
+
+![image-20210224170014995](MySQL执行计划与索引详解.assets/image-20210224170014995.png)
+
 问题：解决like'%字符串%'索引不被使用的方法？
 a）使用覆盖索引，查询字段必须是建立覆盖索引字段
+
 ```mysql
 EXPLAIN SELECT name,age,position FROM employees WHERE name like '%Lei%';
 ```
+![image-20210225094417914](MySQL执行计划与索引详解.assets/image-20210225094417914.png)
+
 b）如果不能使用覆盖索引则可能需要借助搜索引擎
-9.字符串不加单引号索引失效
+
+9. 字符串不加单引号索引失效
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name = '1000';
 ```
+
+![image-20210225094455051](MySQL执行计划与索引详解.assets/image-20210225094455051.png)
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name = 1000;
 ```
-10.少用or或in，用它查询时，mysql不一定使用索引，mysql内部优化器会根据检索比例、
-表大小等多个因素整体评估是否使用索引，详见范围查询优化
+
+![image-20210225094519271](MySQL执行计划与索引详解.assets/image-20210225094519271.png)
+
+10. 少用or或in，用它查询时，mysql不一定使用索引，mysql内部优化器会根据检索比例、表大小等多个因素整体评估是否使用索引，详见范围查询优化
+
 ```mysql
 EXPLAIN SELECT * FROM employees WHERE name = 'LiLei' or name = 'HanMeimei';
 ```
-11.范围查询优化
-给年龄添加单值索引
-1 ALTER TABLE `employees`
-2 ADD INDEX `idx_age` (`age`) USING BTREE ;
+
+![image-20210225094705159](MySQL执行计划与索引详解.assets/image-20210225094705159.png)
+
+11. 范围查询优化
+    给年龄添加单值索引
+```MYSQL
+ALTER TABLE `employees`
+ADD INDEX `idx_age` (`age`) USING BTREE;
+```
+
 ```mysql
 EXPLAIN select * from employees where age >=1 and age <=2000;
 ```
+
+![image-20210225095353066](MySQL执行计划与索引详解.assets/image-20210225095353066.png)
+
+```mysql
+EXPLAIN select * from employees where age >=1 and age <=10;
+```
+
+![image-20210225095330736](MySQL执行计划与索引详解.assets/image-20210225095330736.png)
+
 没走索引原因：mysql内部优化器会根据检索比例、表大小等多个因素整体评估是否使用索
 引。比如这个例子，可能是由于单次数据量查询过大导致优化器最终选择不走索引
 优化方法：可以讲大的范围拆分成多个小范围
+
 ```mysql
 EXPLAIN select * from employees where age >=1 and age <=1000;
 ```
@@ -452,7 +542,27 @@ EXPLAIN select * from employees where age >=1 and age <=1000;
 EXPLAIN select * from employees where age >=1001 and age <=2000;
 ```
 还原最初索引状态
-1 ALTER TABLE `employees`
-2 DROP INDEX `idx_age`;
+
+```MYSQL
+ALTER TABLE `employees`
+DROP INDEX `idx_age`;
+```
+
 索引使用总结：
-like KK%相当于=常量，%KK和%KK% 相当于范围  
+
+假设index(a,b,c)
+
+| Where语句                                      | 索引是否被使用                       |
+| :--------------------------------------------- | ------------------------------------ |
+| where a=3                                      | Y,使用到a                            |
+| where a=3 and b=5                              | Y,使用到a,b                          |
+| where a=3 and b=5 and c=4                      | Y,使用到a,b,c                        |
+| where b=3 或者 where b=3 and c=4 或者where c=4 | N                                    |
+| where a=3 and c=5                              | 使用到a，但是c不可以，b中间断了      |
+| where a=3 and b>4 and c=5                      | 使用到a，b，c不能用在范围之后，b断了 |
+| where a=3 and b like 'kk%' and c=4             | Y,使用到a,b,c                        |
+| where a=3 and b like '%kk' and c=4             | Y,只使用到a                          |
+| where a=3 and b like '%kk%' and c=4            | Y,只使用到a                          |
+| where a=3 and b like '%k%k%' and c=4           | Y,使用到a,b,c                        |
+
+<font color='red'>**like KK%相当于=常量，%KK和%KK% 相当于范围  **</font>
