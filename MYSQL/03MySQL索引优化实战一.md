@@ -304,151 +304,176 @@ EXPLAIN select * from employees where name = 'LiLei' and position = 'dev' order 
 ![image-20210225114029248](03MySQL索引优化实战一.assets/image-20210225114029248.png)
 
 分析：
-利用最左前缀法则：中间字段不能断，因此查询用到了name索引，从key_len=74也能看出，age索引列用
-在排序过程中，因为Extra字段里没有using filesorts	
+利用最左前缀法则：中间字段不能断，因此查询用到了name索引，从key_len=74（3X24+2）也能看出，age索引列用在排序过程中，因为Extra字段里没有using filesort  
 **Case 2**：
-分析：
-从explain的执行结果来看：key_len=74，查询使用了name索引，由于用了position进行排序，跳过了
+
+```mysql
+EXPLAIN SELECT * FROM employees where name = 'LiLei' ORDER BY position;
+```
+
+![image-20210226141758210](03MySQL索引优化实战一.assets/image-20210226141758210.png)分析：
+从explain的执行结果来看：key_len=74，查询只使用了name索引，由于用了position进行排序，跳过了
 age，出现了Using filesort。
-Case 3：
+**Case 3**：
+
+![image-20210226142859390](03MySQL索引优化实战一.assets/image-20210226142859390.png)
+
 分析：
 查找只用到索引name，age和position用于排序，无Using filesort。
-Case 4：
+**Case 4**：
+
+```mysql
+EXPLAIN SELECT * FROM employees where name = 'LiLei' ORDER BY position,age;
+```
+
+![image-20210226145611768](03MySQL索引优化实战一.assets/image-20210226145611768.png)
+
 分析：
 和Case 3中explain的执行结果一样，但是出现了Using filesort，因为索引的创建顺序为
 name,age,position，但是排序的时候age和position颠倒位置了。
-Case 5：
+**Case 5**：
+
+```mysql
+EXPLAIN SELECT * FROM employees where name = 'LiLei' and age= 18 ORDER BY position,age;
+```
+
+![image-20210226150024039](03MySQL索引优化实战一.assets/image-20210226150024039.png)
+
 分析：
 与Case 4对比，在Extra中并未出现Using filesort，因为age为常量，在排序中被优化，所以索引未颠倒，
 不会出现Using filesort。
-Case 6：
+**Case 6**：
+
+```mysql
+EXPLAIN SELECT * FROM employees where name = 'LiLei' ORDER BY age asc,position desc;
+```
+
+![image-20210226150405111](03MySQL索引优化实战一.assets/image-20210226150405111.png)
+
 分析：
 虽然排序的字段列与索引顺序一样，且order by默认升序，这里position desc变成了降序，导致与索引的
 排序方式不同，从而产生Using filesort。Mysql8以上版本有降序索引可以支持该种查询方式。
-Case 7：
+**Case 7**：
+
+```mysql
+EXPLAIN SELECT * FROM employees where name in ('LiLei', 'zhuge') ORDER BY age,position;
+```
+
+![image-20210226150751729](03MySQL索引优化实战一.assets/image-20210226150751729.png)
+
 分析：
 对于排序来说，多个相等条件也是范围查询
-Case 8：
+**Case 8**：
+
+```mysql
+EXPLAIN SELECT * FROM employees where name >'a' ORDER BY name;
+```
+
+![image-20210226151130621](03MySQL索引优化实战一.assets/image-20210226151130621.png)
+
 可以用覆盖索引优化
+
+```mysql
+EXPLAIN SELECT name, age, position FROM employees where name >'a' ORDER BY name;
+```
+
+![image-20210226151442197](03MySQL索引优化实战一.assets/image-20210226151442197.png)
+
 优化总结：
-1、MySQL支持两种方式的排序filesort和index，Using index是指MySQL扫描索引本身完成排序。index
-效率高，filesort效率低。
-2、order by满足两种情况会使用Using index。
-1) order by语句使用索引最左前列。
-2) 使用where子句与order by子句条件列组合满足索引最左前列。
-3、尽量在索引列上完成排序，遵循索引建立（索引创建的顺序）时的最左前缀法则。
-4、如果order by的条件不在索引列上，就会产生Using filesort。
-5、能用覆盖索引尽量用覆盖索引
-6、group by与order by很类似，其实质是先排序后分组，遵照索引创建顺序的最左前缀法则。对于group
-by的优化如果不需要排序的可以加上order by null禁止排序。注意，where高于having，能写在where中
-的限定条件就不要去having限定了。
-Using filesort文件排序原理详解
-filesort文件排序方式
-单路排序：是一次性取出满足条件行的所有字段，然后在sort buffer中进行排序；用trace工具可
-以看到sort_mode信息里显示< sort_key, additional_fields >或者< sort_key,
-packed_additional_fields >
-双路排序（又叫回表排序模式）：是首先根据相应的条件取出相应的排序字段和可以直接定位行
-数据的行 ID，然后在 sort buffer 中进行排序，排序完后需要再次取回其它需要的字段；用trace工具
-可以看到sort_mode信息里显示< sort_key, rowid >
-MySQL 通过比较系统变量 max_length_for_sort_data(默认1024字节) 的大小和需要查询的字段总大小来
-判断使用哪种排序模式。
-如果 max_length_for_sort_data 比查询字段的总长度大，那么使用 单路排序模式；
-如果 max_length_for_sort_data 比查询字段的总长度小，那么使用 双路排序模式。
-示例验证下各种排序方式：
-查看下这条sql对应trace结果如下(只展示排序部分)：
-1 mysql> set session optimizer_trace="enabled=on",end_markers_in_json=on; ‐‐开启trace
-2 mysql> select * from employees where name = 'zhuge' order by position;
-3 mysql> select * from information_schema.OPTIMIZER_TRACE;
-4 5
+1. MySQL支持两种方式的排序<font color='red'>filesort</font>和<font color='red'>index</font>，Using index是指MySQL<font color='red'>扫描索引本身完成排序</font>。index效率高，filesort效率低。
+2. order by满足两种情况会使用Using index。
+    1) order by语句使用<font color='red'>索引最左前列</font>。
+    2) 使用where子句与order by子句<font color='red'>条件列组合满足索引最左前列</font>。
+3. 尽量在索引列上完成排序，遵循索引建立（索引创建的顺序）时的最左前缀法则。
+4. 如果order by的条件不在索引列上，就会产生Using filesort。
+5. 能用覆盖索引尽量用覆盖索引
+6. group by与order by很类似，其实质是<font color='red'>先排序后分组</font>，遵照<font color='red'>索引创建顺序</font>的最左前缀法则。对于group by的优化如果不需要排序的可以加上**order by null禁止排序**。注意，where高于having，能写在where中的限定条件就不要去having限定了。
+
+  ## Using filesort文件排序原理详解
+
+  **filesort文件排序方式**
+
+- **单路排序**：是一次性取出满足条件行的所有字段，然后在sort buffer中进行排序；用trace工具可
+    以看到sort_mode信息里显示< sort_key, additional_fields >或者< sort_key,packed_additional_fields >
+    
+- **双路排序**（又叫回表排序模式）：是首先根据相应的条件取出相应的排序字段和可以直接定位数据的行 ID，然后在 sort buffer 中进行排序，排序完后需要再次取回其它需要的字段；用trace工具可以看到sort_mode信息里显示< sort_key, rowid >
+  MySQL 通过比较系统变量 <font color='red'>**max_length_for_sort_data**</font>(默认1024字节) 的大小和需要查询的<font color='red'>**字段总大小**</font>来判断使用哪种排序模式。(字段总大小，即表中所有列字段的总和)
+
+- 如果 max_length_for_sort_data 比查询字段的总长度大，那么使用 单路排序模式；
+
+- 如果 max_length_for_sort_data 比查询字段的总长度小，那么使用 双路排序模式。
+
+**示例验证下各种排序方式**：
+
+```mysql
+EXPLAIN select * from employees where name = 'LiLei' order by position;
+```
+
+![image-20210226154514333](03MySQL索引优化实战一.assets/image-20210226154514333.png)
+
+ 查看下这条sql对应trace结果如下(只展示排序部分)：
+
+```json
+mysql> set session optimizer_trace="enabled=on",end_markers_in_json=on; ‐‐开启trace
+mysql> select * from employees where name = 'LiLei' order by position;
+mysql> select * from information_schema.OPTIMIZER_TRACE;
+
 trace排序部分结果：
-6 "join_execution": { ‐‐Sql执行阶段
-7 "select#": 1,
-8 "steps": [
-9 {
-10 "filesort_information": [
-11 {
-12 "direction": "asc",
-13 "table": "`employees`",
-14 "field": "position"
-15 }
-16 ] /* filesort_information */,
-17 "filesort_priority_queue_optimization": {
-18 "usable": false,
-19 "cause": "not applicable (no LIMIT)"
-20 } /* filesort_priority_queue_optimization */,
-21 "filesort_execution": [
-22 ] /* filesort_execution */,
-23 "filesort_summary": { ‐‐文件排序信息
-24 "rows": 10000, ‐‐预计扫描行数
-25 "examined_rows": 10000, ‐‐参数排序的行
-26 "number_of_tmp_files": 3, ‐‐使用临时文件的个数，这个值如果为0代表全部使用的sort_buffer内存排序，否则使用的
-磁盘文件排序
-27 "sort_buffer_size": 262056, ‐‐排序缓存的大小
-28 "sort_mode": "<sort_key, packed_additional_fields>" ‐‐排序方式，这里用的单路排序
-29 } /* filesort_summary */
-30 }
-31 ] /* steps */
-32 } /* join_execution */
-33
-34
-35 mysql> set max_length_for_sort_data = 10; ‐‐employees表所有字段长度总和肯定大于10字节
-36 mysql> select * from employees where name = 'zhuge' order by position;
-37 mysql> select * from information_schema.OPTIMIZER_TRACE;
-38
-39 trace排序部分结果：
-40 "join_execution": {
-41 "select#": 1,
-42 "steps": [
-43 {
-44 "filesort_information": [
-45 {
-46 "direction": "asc",
-47 "table": "`employees`",
-48 "field": "position"
-49 }
-50 ] /* filesort_information */,
-51 "filesort_priority_queue_optimization": {
-52 "usable": false,
-53 "cause": "not applicable (no LIMIT)"
-54 } /* filesort_priority_queue_optimization */,
-55 "filesort_execution": [
-56 ] /* filesort_execution */,
-57 "filesort_summary": {
-58 "rows": 10000,
-59 "examined_rows": 10000,
-60 "number_of_tmp_files": 2,
-61 "sort_buffer_size": 262136,
-62 "sort_mode": "<sort_key, rowid>" ‐‐排序方式，这里用的双路排序
-63 } /* filesort_summary */
-64 }
-65 ] /* steps */
-66 } /* join_execution */
-67
-68
-69 mysql> set session optimizer_trace="enabled=off"; ‐‐关闭trace
-我们先看单路排序的详细过程：
-\1. 从索引name找到第一个满足 name = ‘zhuge’ 条件的主键 id
-\2. 根据主键 id 取出整行，取出所有字段的值，存入 sort_buffer 中
-\3. 从索引name找到下一个满足 name = ‘zhuge’ 条件的主键 id
-\4. 重复步骤 2、3 直到不满足 name = ‘zhuge’
-\5. 对 sort_buffer 中的数据按照字段 position 进行排序
-\6. 返回结果给客户端
-我们再看下双路排序的详细过程：
-\1. 从索引 name 找到第一个满足 name = ‘zhuge’ 的主键id
-\2. 根据主键 id 取出整行，把排序字段 position 和主键 id 这两个字段放到 sort buffer 中
-\3. 从索引 name 取下一个满足 name = ‘zhuge’ 记录的主键 id
-\4. 重复 3、4 直到不满足 name = ‘zhuge’
-\5. 对 sort_buffer 中的字段 position 和主键 id 按照字段 position 进行排序
-\6. 遍历排序好的 id 和字段 position，按照 id 的值回到原表中取出 所有字段的值返回给客户端
+"join_execution": {
+        "select#": 1,
+        "steps": [
+          {
+            "filesort_information": [
+              {
+                "direction": "asc",
+                "table": "`employees`",
+                "field": "position"
+              }
+            ] /* filesort_information */,
+            "filesort_priority_queue_optimization": {
+              "usable": false,
+              "cause": "not applicable (no LIMIT)"
+            } /* filesort_priority_queue_optimization */,
+            "filesort_execution": [
+            ] /* filesort_execution */,
+            "filesort_summary": { ‐‐文件排序信息
+              "rows": 1, ‐‐预计扫描行数
+              "examined_rows": 1, ‐‐参数排序的行
+              "number_of_tmp_files": 0, ‐‐使用临时文件的个数，这个值如果为0代表全部使用的sort_buffer内存排序，否则使用的磁盘文件排序
+              "sort_buffer_size": 200704,‐‐排序缓存的大小
+              "sort_mode": "<sort_key, packed_additional_fields>" ‐‐排序方式，这里用的单路排序
+            } /* filesort_summary */
+          }
+        ] /* steps */
+      } /* join_execution */
+```
+
+我们先看**单路排序**的详细过程：
+
+1. 从索引name找到第一个满足 name = ‘LiLei’ 条件的主键 id
+2. 根据主键 id 取出整行，**取出所有字段的值，存入 sort_buffer 中**
+3. 从索引name找到下一个满足 name = ‘LiLei’ 条件的主键 id
+4. 重复步骤 2、3 直到不满足 name = ‘LiLei’
+5. 对 sort_buffer 中的数据按照字段 position 进行排序
+6. 返回结果给客户端
+
+我们再看下**双路排序**的详细过程：
+1. 从索引 name 找到第一个满足 name = ‘LiLei’ 的主键id
+2. 根据主键 id 取出整行，**把排序字段 position 和主键 id 这两个字段放到 sort buffer 中**
+3. 从索引 name 取下一个满足 name = ‘LiLei’ 记录的主键 id
+4. 重复 3、4 直到不满足 name = 'LiLei'
+5. 对 sort_buffer 中的字段 position 和主键 id 按照字段 position 进行排序
+6. 遍历排序好的 id 和字段 position，按照 id 的值**回到原表**中取出 所有字段的值返回给客端
+
 其实对比两个排序模式，单路排序会把所有需要查询的字段都放到 sort buffer 中，而双路排序只会把主键
 和需要排序的字段放到 sort buffer 中进行排序，然后再通过主键回到原表查询需要的字段。
 如果 MySQL 排序内存配置的比较小并且没有条件继续增加了，可以适当把 max_length_for_sort_data 配
-置小点，让优化器选择使用双路排序算法，可以在sort_buffer 中一次排序更多的行，只是需要再根据主键
+置小点，让优化器选择使用**双路排序**算法，可以在sort_buffer 中一次排序更多的行，只是需要再根据主键
 回到原表取数据。
 如果 MySQL 排序内存有条件可以配置比较大，可以适当增大 max_length_for_sort_data 的值，让优化器
-优先选择全字段排序(单路排序)，把需要的字段放到 sort_buffer 中，这样排序后就会直接从内存里返回查
+优先选择全字段排序(**单路排序**)，把需要的字段放到 sort_buffer 中，这样排序后就会直接从内存里返回查
 询结果了。
-所以，MySQL通过 max_length_for_sort_data 这个参数来控制排序，在不同场景使用不同的排序模式，
+所以，MySQL通过 **max_length_for_sort_data** 这个参数来控制排序，在不同场景使用不同的排序模式，
 从而提升排序效率。
-注意，如果全部使用sort_buffer内存排序一般情况下效率会高于磁盘文件排序，但不能因为这个就随便增
-大sort_buffer(默认1M)，mysql很多参数设置都是做过优化的，不要轻易调整。  
+**注意**，如果全部使用sort_buffer内存排序一般情况下效率会高于磁盘文件排序，但不能因为这个就随便增
+大sort_buffer(默认1M)，mysql很多参数设置都是做过优化的，不要轻易调整。    
